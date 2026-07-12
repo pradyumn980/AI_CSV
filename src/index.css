@@ -293,6 +293,11 @@ p {
   padding-right: 2.5rem;
 }
 
+.glass-select option {
+  background-color: #0b0d19;
+  color: #f8fafc;
+}
+
 /* Upload Area */
 .upload-zone {
   border: 2px dashed rgba(255, 255, 255, 0.15);
