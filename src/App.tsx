@@ -8,6 +8,7 @@ import {
   cleanLeadDataLocally,
   performAIExtractionUnstructured, 
   validateLead,
+  calculateLeadScoreAndSegment,
   TARGET_FIELDS
 } from './utils/aiService';
 import { Dashboard } from './components/Dashboard';
@@ -183,8 +184,18 @@ ellen ripley,ripley@weyland.com,888-999-2222,Weyland-Yutani,Warrant Officer,$800
           const validated = {
             ...lead,
             id: crypto.randomUUID(),
-            validationErrors: validateLead(lead)
+            leadScore: 0,
+            leadGrade: 'D' as 'A' | 'B' | 'C' | 'D',
+            segment: 'Unknown' as 'Enterprise' | 'Mid-Market' | 'SMB' | 'Unknown',
+            nextAction: 'Qualify contact details',
+            validationErrors: {}
           };
+          const scoreResult = calculateLeadScoreAndSegment(validated);
+          validated.leadScore = scoreResult.score;
+          validated.leadGrade = scoreResult.grade;
+          validated.segment = scoreResult.segment;
+          validated.nextAction = scoreResult.nextAction;
+          validated.validationErrors = validateLead(validated);
           return validated;
         });
 
@@ -257,6 +268,13 @@ ellen ripley,ripley@weyland.com,888-999-2222,Weyland-Yutani,Warrant Officer,$800
       // Local standardized parsing cleanup for mapped fields
       const cleaned = cleanLeadDataLocally(lead);
       cleaned.id = lead.id;
+      
+      const scoreResult = calculateLeadScoreAndSegment(cleaned);
+      cleaned.leadScore = scoreResult.score;
+      cleaned.leadGrade = scoreResult.grade;
+      cleaned.segment = scoreResult.segment;
+      cleaned.nextAction = scoreResult.nextAction;
+
       cleaned.validationErrors = validateLead(cleaned);
 
       return cleaned;
@@ -286,10 +304,16 @@ ellen ripley,ripley@weyland.com,888-999-2222,Weyland-Yutani,Warrant Officer,$800
       }
 
       // Re-run validation on everything
-      const validatedLeads = cleaned.map(lead => ({
-        ...lead,
-        validationErrors: validateLead(lead)
-      }));
+      const validatedLeads = cleaned.map(lead => {
+        const validated = { ...lead };
+        const scoreResult = calculateLeadScoreAndSegment(validated);
+        validated.leadScore = scoreResult.score;
+        validated.leadGrade = scoreResult.grade;
+        validated.segment = scoreResult.segment;
+        validated.nextAction = scoreResult.nextAction;
+        validated.validationErrors = validateLead(validated);
+        return validated;
+      });
 
       setLeadsToReview(validatedLeads);
     } catch (err) {

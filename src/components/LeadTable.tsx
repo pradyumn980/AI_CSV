@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { CRMLead } from '../utils/aiService';
-import { validateLead } from '../utils/aiService';
+import { validateLead, calculateLeadScoreAndSegment, generateOutreachEmail } from '../utils/aiService';
 import { 
   Search, 
   Trash2, 
@@ -10,7 +10,11 @@ import {
   Sparkles, 
   ArrowLeft, 
   ArrowRight,
-  Database
+  Database,
+  Mail,
+  Copy,
+  CheckCircle2,
+  X
 } from 'lucide-react';
 
 interface LeadTableProps {
@@ -37,11 +41,48 @@ export const LeadTable: React.FC<LeadTableProps> = ({
   const [editingCell, setEditingCell] = useState<{ index: number; field: keyof CRMLead } | null>(null);
   const [editingValue, setEditingValue] = useState('');
 
+  // AI Modal States
+  const [showOutreach, setShowOutreach] = useState(false);
+  const [selectedLeadForEmail, setSelectedLeadForEmail] = useState<Partial<CRMLead> | null>(null);
+  const [emailTone, setEmailTone] = useState<'professional' | 'friendly' | 'direct' | 'urgent'>('professional');
+  const [emailDraft, setEmailDraft] = useState('');
+  const [isGeneratingEmail, setIsGeneratingEmail] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const openOutreachModal = async (lead: Partial<CRMLead>) => {
+    setSelectedLeadForEmail(lead);
+    setShowOutreach(true);
+    setEmailTone('professional');
+    await generateDraftForTone(lead, 'professional');
+  };
+
+  const generateDraftForTone = async (lead: Partial<CRMLead>, tone: 'professional' | 'friendly' | 'direct' | 'urgent') => {
+    setIsGeneratingEmail(true);
+    setCopied(false);
+    try {
+      const key = localStorage.getItem('auracrm_gemini_key') || '';
+      const draft = await generateOutreachEmail(key, lead, tone);
+      setEmailDraft(draft);
+    } catch (err) {
+      console.error(err);
+      setEmailDraft('Error generating email draft.');
+    } finally {
+      setIsGeneratingEmail(false);
+    }
+  };
+
   // Local helper to update a field in a lead row
   const updateLeadField = (index: number, field: keyof CRMLead, value: string) => {
     const updatedLeads = [...leads];
     const updatedLead = { ...updatedLeads[index], [field]: value };
     
+    // Recalculate AI score
+    const aiResult = calculateLeadScoreAndSegment(updatedLead);
+    updatedLead.leadScore = aiResult.score;
+    updatedLead.leadGrade = aiResult.grade;
+    updatedLead.segment = aiResult.segment;
+    updatedLead.nextAction = aiResult.nextAction;
+
     // Re-run validation
     updatedLead.validationErrors = validateLead(updatedLead);
     
@@ -51,8 +92,8 @@ export const LeadTable: React.FC<LeadTableProps> = ({
 
   // Start cell editing
   const startEditing = (index: number, field: keyof CRMLead, currentValue: string) => {
-    // Don't edit metadata fields
-    if (field === 'validationErrors' || field === 'id' || field === 'isCleanedByAI') return;
+    // Don't edit metadata fields or scores directly
+    if (field === 'validationErrors' || field === 'id' || field === 'isCleanedByAI' || field === 'leadScore' || field === 'leadGrade' || field === 'segment' || field === 'nextAction') return;
     setEditingCell({ index, field });
     setEditingValue(currentValue || '');
   };
@@ -86,6 +127,10 @@ export const LeadTable: React.FC<LeadTableProps> = ({
       source: 'Manual Entry',
       status: 'New',
       location: '',
+      leadScore: 0,
+      leadGrade: 'D',
+      segment: 'Unknown',
+      nextAction: 'Qualify contact details',
       validationErrors: {
         name: 'Lead Name is required',
         email: 'Email Address is required'
@@ -142,6 +187,21 @@ export const LeadTable: React.FC<LeadTableProps> = ({
       
       return true;
     });
+
+  // Deduplication check: group by email and find duplicates in this batch
+  const emailGroups = leads.reduce((acc, lead) => {
+    if (lead.email) {
+      const email = lead.email.toLowerCase().trim();
+      acc[email] = (acc[email] || 0) + 1;
+    }
+    return acc;
+  }, {} as Record<string, number>);
+
+  const duplicateEmails = Object.entries(emailGroups)
+    .filter(([_, count]) => count > 1)
+    .map(([email]) => email);
+
+  const duplicatesCount = duplicateEmails.length;
 
   return (
     <div className="animate-fade-in">
@@ -222,6 +282,50 @@ export const LeadTable: React.FC<LeadTableProps> = ({
         </div>
       </div>
 
+      {/* Deduplication Banner */}
+      {duplicatesCount > 0 && (
+        <div 
+          className="glass-card duplicate-banner animate-fade-in" 
+          style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center', 
+            padding: '1rem 1.5rem', 
+            marginBottom: '1.5rem', 
+            borderLeft: '4px solid var(--color-warning)', 
+            background: 'rgba(245, 158, 11, 0.03)' 
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <span style={{ color: 'var(--color-warning)' }}><AlertTriangle size={20} /></span>
+            <div>
+              <h4 style={{ fontSize: '0.95rem', fontWeight: 700, margin: 0 }}>Duplicate Records Detected</h4>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0.2rem 0 0 0' }}>
+                We found {duplicatesCount} duplicate email address{duplicatesCount > 1 ? 'es' : ''} in this batch.
+              </p>
+            </div>
+          </div>
+          <button 
+            id="btn-merge-duplicates"
+            className="btn btn-secondary" 
+            onClick={() => {
+              const seen = new Set<string>();
+              const uniqueLeads = leads.filter(lead => {
+                if (!lead.email) return true;
+                const email = lead.email.toLowerCase().trim();
+                if (seen.has(email)) return false;
+                seen.add(email);
+                return true;
+              });
+              onUpdateLeads(uniqueLeads);
+            }}
+            style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem' }}
+          >
+            Merge duplicates
+          </button>
+        </div>
+      )}
+
       {/* Editor Grid Table */}
       <div className="table-container" style={{ maxHeight: '550px', overflowY: 'auto' }}>
         <table className="review-table">
@@ -229,12 +333,16 @@ export const LeadTable: React.FC<LeadTableProps> = ({
             <tr>
               <th style={{ width: '50px' }}>Actions</th>
               <th>Status</th>
+              <th>AI Grade</th>
+              <th>Segment</th>
               <th>Lead Name *</th>
               <th>Email Address *</th>
               <th>Phone Number</th>
               <th>Company</th>
               <th>Job Title</th>
               <th>Est. Deal Size ($)</th>
+              <th>Recommended Action</th>
+              <th>Outreach</th>
               <th>Source</th>
               <th>Lead Stage</th>
               <th>Location</th>
@@ -243,7 +351,7 @@ export const LeadTable: React.FC<LeadTableProps> = ({
           <tbody>
             {filteredLeads.length === 0 ? (
               <tr>
-                <td colSpan={11} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
+                <td colSpan={15} style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
                   No leads matching the active filters.
                 </td>
               </tr>
@@ -285,6 +393,36 @@ export const LeadTable: React.FC<LeadTableProps> = ({
                           AI Cleaned
                         </span>
                       )}
+                    </td>
+
+                    {/* AI Grade */}
+                    <td>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', minWidth: '95px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', justifyContent: 'space-between' }}>
+                          <span className={`badge badge-grade-${lead.leadGrade || 'D'}`}>
+                            Grade {lead.leadGrade || 'D'}
+                          </span>
+                          <span style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-secondary)' }}>
+                            {lead.leadScore || 0}%
+                          </span>
+                        </div>
+                        <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.05)', borderRadius: '2px', overflow: 'hidden' }}>
+                          <div 
+                            style={{ 
+                              height: '100%', 
+                              width: `${lead.leadScore || 0}%`, 
+                              background: (lead.leadScore || 0) >= 80 ? 'var(--color-success)' : (lead.leadScore || 0) >= 60 ? 'var(--color-info)' : (lead.leadScore || 0) >= 40 ? 'var(--color-warning)' : 'var(--color-danger)'
+                            }} 
+                          />
+                        </div>
+                      </div>
+                    </td>
+
+                    {/* Segment */}
+                    <td>
+                      <span className={`badge badge-segment-${(lead.segment || 'Unknown').toLowerCase()}`}>
+                        {lead.segment || 'Unknown'}
+                      </span>
                     </td>
 
                     {/* Name */}
@@ -441,6 +579,27 @@ export const LeadTable: React.FC<LeadTableProps> = ({
                       )}
                     </td>
 
+                    {/* Recommended Action */}
+                    <td>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', whiteSpace: 'normal', display: 'block', maxWidth: '200px' }}>
+                        {lead.nextAction || 'Qualify details'}
+                      </span>
+                    </td>
+
+                    {/* Outreach */}
+                    <td style={{ textAlign: 'center' }}>
+                      <button 
+                        id={`btn-outreach-${globalIdx}`}
+                        className="btn btn-secondary btn-icon" 
+                        onClick={() => openOutreachModal(lead)}
+                        title="Generate AI Outreach Email"
+                        style={{ padding: '0.35rem', borderColor: 'rgba(139, 92, 246, 0.3)', color: '#c084fc', background: 'rgba(139,92,246,0.02)' }}
+                        disabled={!lead.email || !!lead.validationErrors?.email}
+                      >
+                        <Mail size={14} />
+                      </button>
+                    </td>
+
                     {/* Source */}
                     <td 
                       id={`cell-source-${globalIdx}`}
@@ -525,6 +684,98 @@ export const LeadTable: React.FC<LeadTableProps> = ({
           <ArrowRight size={16} />
         </button>
       </div>
+
+      {/* AI Email Outreach Modal */}
+      {showOutreach && selectedLeadForEmail && (
+        <div className="modal-overlay animate-fade-in" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', backgroundColor: 'rgba(0, 0, 0, 0.65)', zIndex: 1000, backdropFilter: 'blur(8px)' }}>
+          <div className="glass-card modal-container animate-scale-up" style={{ width: '90%', maxWidth: '650px', padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1.5rem', border: '1px solid rgba(255, 255, 255, 0.1)', boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.37)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Sparkles size={20} style={{ color: '#c084fc' }} />
+                <h3 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0 }}>AI Lead Outreach Assistant</h3>
+              </div>
+              <button 
+                id="btn-close-outreach"
+                className="btn btn-secondary btn-icon" 
+                onClick={() => setShowOutreach(false)}
+                style={{ padding: '0.25rem', border: 'none', background: 'none', color: 'var(--text-secondary)' }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            
+            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+              Drafting personalized outreach to <strong>{selectedLeadForEmail.name}</strong> ({selectedLeadForEmail.jobTitle || 'Prospect'} at {selectedLeadForEmail.company || 'Unknown Company'}).
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Outreach Tone</label>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                {(['professional', 'friendly', 'direct', 'urgent'] as const).map((tone) => (
+                  <button
+                    key={tone}
+                    id={`btn-tone-${tone}`}
+                    className={`btn ${emailTone === tone ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => {
+                      setEmailTone(tone);
+                      generateDraftForTone(selectedLeadForEmail, tone);
+                    }}
+                    style={{ textTransform: 'capitalize', fontSize: '0.8rem', padding: '0.4rem 0.8rem', flex: 1 }}
+                  >
+                    {tone}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ flex: 1, minHeight: '200px', display: 'flex', flexDirection: 'column' }}>
+              <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Generated Outreach Email</label>
+              {isGeneratingEmail ? (
+                <div style={{ flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)', color: 'var(--text-secondary)', fontSize: '0.9rem', height: '220px' }}>
+                  <span className="spinner" style={{ marginRight: '0.5rem' }}></span>
+                  Generating customized email draft...
+                </div>
+              ) : (
+                <textarea
+                  id="textarea-email-draft"
+                  className="glass-input"
+                  style={{ flex: 1, width: '100%', height: '220px', fontFamily: 'monospace', fontSize: '0.85rem', padding: '0.75rem', resize: 'none', lineHeight: '1.4' }}
+                  value={emailDraft}
+                  onChange={(e) => setEmailDraft(e.target.value)}
+                />
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+              <button 
+                id="btn-outreach-copy"
+                className="btn btn-secondary" 
+                onClick={() => {
+                  navigator.clipboard.writeText(emailDraft);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                }}
+                disabled={isGeneratingEmail}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                {copied ? <CheckCircle2 size={16} style={{ color: 'var(--color-success)' }} /> : <Copy size={16} />}
+                {copied ? 'Copied!' : 'Copy to Clipboard'}
+              </button>
+              <button 
+                id="btn-outreach-send"
+                className="btn btn-primary" 
+                onClick={() => {
+                  window.open(`mailto:${selectedLeadForEmail.email}?subject=${encodeURIComponent(emailDraft.split('\n')[0].replace('Subject: ', ''))}&body=${encodeURIComponent(emailDraft.split('\n').slice(2).join('\n'))}`);
+                  setShowOutreach(false);
+                }}
+                disabled={isGeneratingEmail}
+              >
+                Send Outreach
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

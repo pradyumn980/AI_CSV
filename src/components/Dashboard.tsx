@@ -7,7 +7,8 @@ import {
   BarChart2, 
   ShieldAlert, 
   CheckCircle,
-  FolderOpen
+  FolderOpen,
+  Sparkles
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -31,6 +32,22 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   const validLeads = leads.filter(lead => Object.keys(lead.validationErrors).length === 0).length;
   const validationRate = totalLeads > 0 ? Math.round((validLeads / totalLeads) * 100) : 0;
+
+  // AI Quality Grade Stats
+  const highQualityLeads = leads.filter(lead => lead.leadGrade === 'A' || lead.leadGrade === 'B').length;
+
+  const gradeCounts = leads.reduce((acc, lead) => {
+    const grade = lead.leadGrade || 'D';
+    acc[grade] = (acc[grade] || 0) + 1;
+    return acc;
+  }, { 'A': 0, 'B': 0, 'C': 0, 'D': 0 } as Record<string, number>);
+
+  // Segment stats
+  const segmentCounts = leads.reduce((acc, lead) => {
+    const seg = lead.segment || 'Unknown';
+    acc[seg] = (acc[seg] || 0) + 1;
+    return acc;
+  }, { 'Enterprise': 0, 'Mid-Market': 0, 'SMB': 0, 'Unknown': 0 } as Record<string, number>);
 
   // Source distribution
   const sourceCounts = leads.reduce((acc, lead) => {
@@ -104,6 +121,107 @@ export const Dashboard: React.FC<DashboardProps> = ({
           Leads
         </text>
       </svg>
+    );
+  };
+
+  // Render SVG Donut Chart for Grades
+  const renderGradeDonut = () => {
+    const grades = Object.entries(gradeCounts);
+    const total = totalLeads;
+    if (total === 0) return null;
+
+    let accumulatedAngle = 0;
+    const radius = 60;
+    const strokeWidth = 14;
+    const center = 80;
+    const circumference = 2 * Math.PI * radius;
+
+    const colors: Record<string, string> = {
+      'A': '#a855f7', // Purple/Violet
+      'B': '#3b82f6', // Blue
+      'C': '#f59e0b', // Yellow/Orange
+      'D': '#64748b'  // Slate
+    };
+
+    return (
+      <svg width="180" height="180" viewBox="0 0 160 160">
+        <circle cx={center} cy={center} r={radius} fill="transparent" stroke="rgba(255,255,255,0.03)" strokeWidth={strokeWidth} />
+        {grades.map(([grade, count]) => {
+          if (count === 0) return null;
+          const percentage = count / total;
+          const strokeLength = percentage * circumference;
+          const strokeOffset = circumference - strokeLength + accumulatedAngle;
+          accumulatedAngle -= strokeLength;
+
+          return (
+            <circle
+              key={grade}
+              cx={center}
+              cy={center}
+              r={radius}
+              fill="transparent"
+              stroke={colors[grade]}
+              strokeWidth={strokeWidth}
+              strokeDasharray={circumference}
+              strokeDashoffset={strokeOffset}
+              strokeLinecap="round"
+              transform={`rotate(-90 ${center} ${center})`}
+              style={{ transition: 'stroke-dashoffset 0.5s ease' }}
+            />
+          );
+        })}
+        <text x={center} y={center - 5} textAnchor="middle" fill="var(--text-primary)" fontSize="18" fontWeight="bold" fontFamily="var(--font-heading)">
+          {gradeCounts['A'] + gradeCounts['B']}
+        </text>
+        <text x={center} y={center + 15} textAnchor="middle" fill="var(--text-secondary)" fontSize="10" fontWeight="600" style={{ textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          Grade A/B
+        </text>
+      </svg>
+    );
+  };
+
+  // Render Segment Bar Chart
+  const renderSegmentBarChart = () => {
+    const segments = Object.entries(segmentCounts)
+      .sort((a, b) => b[1] - a[1]);
+    
+    const maxCount = Math.max(...segments.map(([_, count]) => count));
+    if (totalLeads === 0) return null;
+
+    const segmentColors: Record<string, string> = {
+      'Enterprise': '#c084fc',
+      'Mid-Market': '#60a5fa',
+      'SMB': '#34d399',
+      'Unknown': '#94a3b8'
+    };
+
+    return (
+      <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        {segments.map(([segment, count]) => {
+          const pct = maxCount > 0 ? (count / maxCount) * 100 : 0;
+          return (
+            <div key={segment} style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                <span style={{ fontWeight: '500', color: 'var(--text-primary)' }}>{segment}</span>
+                <span style={{ color: 'var(--text-secondary)', fontWeight: '600' }}>
+                  {count} ({Math.round((count / totalLeads) * 100)}%)
+                </span>
+              </div>
+              <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden' }}>
+                <div 
+                  style={{ 
+                    height: '100%', 
+                    width: `${pct}%`, 
+                    background: segmentColors[segment] || 'var(--primary-glow)',
+                    borderRadius: '4px',
+                    transition: 'width 0.8s ease'
+                  }} 
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
     );
   };
 
@@ -242,6 +360,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 </span>
               </div>
             </div>
+
+            {/* High Quality Leads */}
+            <div className="glass-card stats-card">
+              <div className="stats-icon-container" style={{ background: 'rgba(168, 85, 247, 0.15)', color: '#c084fc', border: '1px solid rgba(168, 85, 247, 0.2)' }}>
+                <Sparkles size={24} />
+              </div>
+              <div className="stats-info">
+                <span className="stats-label">Grade A/B Prospects</span>
+                <span className="stats-value">{highQualityLeads}</span>
+              </div>
+            </div>
           </div>
 
           {/* Charts Row */}
@@ -286,6 +415,93 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </div>
             </div>
           </div>
+
+          {/* AI/ML Predictive Analytics Charts Row */}
+          <div className="charts-container" style={{ marginTop: '2rem', marginBottom: '2rem' }}>
+            {/* Quality Grade donut */}
+            <div className="glass-card chart-card">
+              <div className="chart-header">
+                <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>AI Lead Quality Grades</h3>
+                <Sparkles size={18} style={{ color: '#c084fc' }} />
+              </div>
+              <div className="chart-content" style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
+                {renderGradeDonut()}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', justifyContent: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+                    <div style={{ width: '12px', height: '12px', borderRadius: '3px', background: '#a855f7' }} />
+                    <span style={{ color: 'var(--text-secondary)' }}>Grade A: <strong>{gradeCounts['A']}</strong></span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+                    <div style={{ width: '12px', height: '12px', borderRadius: '3px', background: '#3b82f6' }} />
+                    <span style={{ color: 'var(--text-secondary)' }}>Grade B: <strong>{gradeCounts['B']}</strong></span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+                    <div style={{ width: '12px', height: '12px', borderRadius: '3px', background: '#f59e0b' }} />
+                    <span style={{ color: 'var(--text-secondary)' }}>Grade C: <strong>{gradeCounts['C']}</strong></span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+                    <div style={{ width: '12px', height: '12px', borderRadius: '3px', background: '#64748b' }} />
+                    <span style={{ color: 'var(--text-secondary)' }}>Grade D: <strong>{gradeCounts['D']}</strong></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Corporate Segmentation Chart */}
+            <div className="glass-card chart-card">
+              <div className="chart-header">
+                <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Corporate Segmentation</h3>
+                <BarChart2 size={18} style={{ color: 'var(--text-muted)' }} />
+              </div>
+              <div className="chart-content" style={{ alignItems: 'flex-start', paddingTop: '1rem' }}>
+                {renderSegmentBarChart()}
+              </div>
+            </div>
+          </div>
+
+          {/* High-Value Enterprise Prospects list */}
+          {leads.some(l => l.leadGrade === 'A') && (
+            <div className="glass-card" style={{ padding: '1.5rem', marginBottom: '2rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+                <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: '#c084fc', display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
+                  <Sparkles size={18} />
+                  High-Priority Enterprise Leads (Grade A)
+                </h3>
+              </div>
+              <div className="table-container" style={{ margin: 0 }}>
+                <table className="review-table">
+                  <thead>
+                    <tr>
+                      <th>Lead Name</th>
+                      <th>Company</th>
+                      <th>Job Title</th>
+                      <th>Score</th>
+                      <th>Est. Value</th>
+                      <th>Recommended Next Step</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {leads.filter(l => l.leadGrade === 'A').slice(0, 5).map((lead) => (
+                      <tr key={lead.id} style={{ background: 'rgba(192, 132, 252, 0.01)' }}>
+                        <td style={{ fontWeight: '600' }}>{lead.name}</td>
+                        <td>{lead.company || '-'}</td>
+                        <td>{lead.jobTitle || '-'}</td>
+                        <td>
+                          <span className="badge badge-grade-a">Grade A ({lead.leadScore}%)</span>
+                        </td>
+                        <td style={{ fontWeight: '600', color: '#c084fc' }}>
+                          {lead.revenue ? `$${parseFloat(lead.revenue).toLocaleString()}` : '-'}
+                        </td>
+                        <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                          {lead.nextAction}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {/* Recent Leads Grid */}
           <div className="glass-card" style={{ padding: '1.5rem' }}>

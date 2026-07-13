@@ -746,3 +746,43 @@ input:checked + .slider:before {
   max-width: 500px;
   width: 100%;
 }
+
+/* AI Lead Quality Grade badges */
+.badge-grade-A, .badge-grade-a {
+  background: rgba(168, 85, 247, 0.15);
+  color: #c084fc;
+}
+.badge-grade-B, .badge-grade-b {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+}
+.badge-grade-C, .badge-grade-c {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fcd34d;
+}
+.badge-grade-D, .badge-grade-d {
+  background: rgba(100, 116, 139, 0.15);
+  color: #94a3b8;
+}
+
+/* Corporate Segment badges */
+.badge-segment-enterprise, .badge-segment-Enterprise {
+  background: rgba(168, 85, 247, 0.1);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.2);
+}
+.badge-segment-mid-market, .badge-segment-Mid-Market {
+  background: rgba(59, 130, 246, 0.1);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.2);
+}
+.badge-segment-smb, .badge-segment-SMB {
+  background: rgba(52, 211, 153, 0.1);
+  color: #34d399;
+  border: 1px solid rgba(52, 211, 153, 0.2);
+}
+.badge-segment-unknown, .badge-segment-Unknown {
+  background: rgba(148, 163, 184, 0.1);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}

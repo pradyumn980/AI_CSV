@@ -18,6 +18,10 @@ export interface CRMLead {
     revenue?: string;
   };
   isCleanedByAI?: boolean;
+  leadScore?: number;
+  leadGrade?: 'A' | 'B' | 'C' | 'D';
+  segment?: 'Enterprise' | 'Mid-Market' | 'SMB' | 'Unknown';
+  nextAction?: string;
 }
 
 export interface ColumnMapping {
@@ -511,4 +515,206 @@ export const performAIExtractionUnstructured = async (
     console.warn('Gemini AI Unstructured Extraction failed, falling back to local regex extraction:', error);
     return parseUnstructuredRowsLocally(rows);
   }
+};
+
+export interface AIScoringResult {
+  score: number;
+  grade: 'A' | 'B' | 'C' | 'D';
+  segment: 'Enterprise' | 'Mid-Market' | 'SMB' | 'Unknown';
+  nextAction: string;
+}
+
+/**
+ * Calculates lead quality score (0-100), tier grade (A-D), corporate segment,
+ * and recommends the next best action.
+ */
+export const calculateLeadScoreAndSegment = (lead: Partial<CRMLead>): AIScoringResult => {
+  let score = 0;
+  
+  // 1. Job Title Scoring (up to 30 pts)
+  const title = (lead.jobTitle || '').toLowerCase();
+  if (title.includes('ceo') || title.includes('founder') || title.includes('president') || title.includes('co-founder') || title.includes('cfo') || title.includes('cto') || title.includes('coo') || title.includes('cxo') || title.includes('owner')) {
+    score += 30;
+  } else if (title.includes('vp') || title.includes('vice president') || title.includes('director') || title.includes('head')) {
+    score += 20;
+  } else if (title.includes('manager') || title.includes('lead') || title.includes('chief')) {
+    score += 15;
+  } else if (title.includes('engineer') || title.includes('analyst') || title.includes('consultant') || title.includes('associate')) {
+    score += 10;
+  } else if (title) {
+    score += 5;
+  }
+
+  // 2. Email Domain Scoring (up to 25 pts)
+  const email = (lead.email || '').toLowerCase();
+  if (email) {
+    const freeDomains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'aol.com', 'icloud.com', 'mail.com', 'zoho.com', 'yandex.com', 'protonmail.com'];
+    const domain = email.split('@')[1] || '';
+    if (domain) {
+      if (freeDomains.includes(domain)) {
+        score += 10; // personal/free domain
+      } else {
+        score += 25; // business/corporate domain
+      }
+    }
+  }
+
+  // 3. Deal Size/Revenue Scoring (up to 30 pts)
+  const revVal = parseFloat((lead.revenue || '').replace(/[^0-9.]/g, '')) || 0;
+  if (revVal >= 100000) {
+    score += 30;
+  } else if (revVal >= 50000) {
+    score += 20;
+  } else if (revVal >= 10000) {
+    score += 10;
+  } else if (revVal > 0) {
+    score += 5;
+  }
+
+  // 4. Completeness Scoring (up to 15 pts)
+  if (lead.phone && lead.phone.trim()) score += 5;
+  if (lead.location && lead.location.trim()) score += 5;
+  if (lead.company && lead.company.trim()) score += 5;
+
+  // Cap score at 100
+  score = Math.min(score, 100);
+
+  // Determine Grade
+  let grade: 'A' | 'B' | 'C' | 'D' = 'D';
+  if (score >= 80) grade = 'A';
+  else if (score >= 60) grade = 'B';
+  else if (score >= 40) grade = 'C';
+
+  // Determine Segment
+  let segment: 'Enterprise' | 'Mid-Market' | 'SMB' | 'Unknown' = 'Unknown';
+  if (revVal >= 100000) {
+    segment = 'Enterprise';
+  } else if (revVal >= 25000) {
+    segment = 'Mid-Market';
+  } else if (revVal > 0) {
+    segment = 'SMB';
+  } else if (lead.company) {
+    segment = 'SMB'; // default if company is present
+  }
+
+  // Recommended Next Action
+  let nextAction = 'Qualify contact details';
+  if (grade === 'A') {
+    if (title.includes('ceo') || title.includes('founder') || title.includes('owner')) {
+      nextAction = 'Executive outreach: Send custom proposal introducing enterprise integrations';
+    } else {
+      nextAction = 'High priority: Coordinate a discovery call with engineering heads';
+    }
+  } else if (grade === 'B') {
+    nextAction = 'Product showcase: Send specific case studies and schedule platform demo';
+  } else if (grade === 'C') {
+    nextAction = 'Nurture: Add to monthly newsletter and automated outreach campaign';
+  } else {
+    nextAction = 'Profile building: Verify contact credentials and search for phone number';
+  }
+
+  return { score, grade, segment, nextAction };
+};
+
+/**
+ * AI Outreach Email Generator - Tone selection based outreach drafts
+ */
+export const generateOutreachEmail = async (
+  apiKey: string,
+  lead: Partial<CRMLead>,
+  tone: 'professional' | 'friendly' | 'direct' | 'urgent' = 'professional'
+): Promise<string> => {
+  if (apiKey.trim()) {
+    try {
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      const prompt = `
+        You are a sales outreach assistant. Write a personalized cold outreach email to this lead:
+        Name: ${lead.name}
+        Email: ${lead.email}
+        Company: ${lead.company || 'their organization'}
+        Job Title: ${lead.jobTitle || 'Professional'}
+        Estimated Deal Size: $${lead.revenue || 'unspecified'}
+        Lead Source: ${lead.source || 'website'}
+        Location: ${lead.location || 'unspecified'}
+        
+        Tone: ${tone}
+        
+        Instructions:
+        1. Write a short, engaging subject line.
+        2. Keep the email copy concise (under 150 words).
+        3. Personalize it using their job title and company.
+        4. Provide a clear call to action (e.g. scheduling a brief 10 min call).
+        5. Do not include placeholders like "[Your Name]". Instead, sign off as "Aura Sales Team".
+      `;
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      return response.text();
+    } catch (error) {
+      console.warn('Gemini Email generation failed, using fallback:', error);
+    }
+  }
+  
+  // Fallback template generator
+  const subjectLines: Record<string, string> = {
+    professional: `Exploring collaboration opportunities between Aura and ${lead.company || 'your organization'}`,
+    friendly: `Hello ${lead.name ? lead.name.split(' ')[0] : 'there'} - quick question about sales operations at ${lead.company || 'your firm'}`,
+    direct: `Improving productivity at ${lead.company || 'your firm'}`,
+    urgent: `Urgent: Streamlining pipelines for ${lead.company || 'your firm'}`
+  };
+
+  const templates: Record<string, string> = {
+    professional: `Subject: ${subjectLines.professional}
+
+Dear ${lead.name || 'Prospect'},
+
+I hope this email finds you well.
+
+I recently came across your profile and noticed your role as ${lead.jobTitle || 'Professional'} at ${lead.company || 'your organization'}. Given your expertise, I thought you might be interested in how we help organizations scale their data management pipelines.
+
+We've recently helped firms similar to ${lead.company || 'yours'} increase deal speeds and data accuracy. I'd love to schedule a brief 10-minute introductory call next week to see if there is a mutual fit.
+
+Best regards,
+Aura Sales Team`,
+    friendly: `Subject: ${subjectLines.friendly}
+
+Hi ${lead.name ? lead.name.split(' ')[0] : 'there'},
+
+Hope you're having a great week!
+
+I saw that you're working as ${lead.jobTitle || 'Professional'} at ${lead.company || 'your company'} and wanted to reach out. I love what you guys are building there.
+
+We run a data automation platform designed to make CRM importing completely hands-off. Since you manage client relations, I thought this could save you and your team a ton of hours.
+
+Let me know if you have 10 minutes to chat next Tuesday or Thursday!
+
+Cheers,
+Aura Sales Team`,
+    direct: `Subject: ${subjectLines.direct}
+
+Hi ${lead.name || 'Prospect'},
+
+I'm reaching out because we help ${lead.company || 'organizations'} automate their lead routing and validation processes. 
+
+We can help clean, score, and map your CSV data automatically in seconds. Given your role as ${lead.jobTitle || 'Professional'}, I wanted to see if you'd be open to a quick demonstration.
+
+Are you available for a brief call next Wednesday at 10 AM?
+
+Thanks,
+Aura Sales Team`,
+    urgent: `Subject: ${subjectLines.urgent}
+
+Dear ${lead.name || 'Prospect'},
+
+With current shifts in CRM management, data accuracy is more critical than ever. 
+
+As ${lead.jobTitle || 'Professional'} at ${lead.company || 'your company'}, ensuring clean pipelines is vital for quarterly targets. We can help you automate lead cleanup and scoring instantly.
+
+Let's coordinate a quick call this week to review how we can support ${lead.company || 'your team'}. Do you have time tomorrow at 2 PM?
+
+Sincerely,
+Aura Sales Team`
+  };
+
+  return templates[tone] || templates.professional;
 };
