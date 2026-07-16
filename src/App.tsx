@@ -54,7 +54,7 @@ function App() {
   const [leadsToReview, setLeadsToReview] = useState<Partial<CRMLead>[]>([]);
   const [isCleaningData, setIsCleaningData] = useState(false);
 
-  // CRM Leads database
+  
   const [leadsDatabase, setLeadsDatabase] = useState<CRMLead[]>(() => {
     const saved = localStorage.getItem('auracrm_leads_db');
     return saved ? JSON.parse(saved) : [];
