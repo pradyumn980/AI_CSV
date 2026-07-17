@@ -50,7 +50,7 @@ function App() {
   const [columnMappings, setColumnMappings] = useState<Record<string, ColumnMapping>>({});
   const [isMappingLoading, setIsMappingLoading] = useState(false);
   
-  // Leads Review State
+  
   const [leadsToReview, setLeadsToReview] = useState<Partial<CRMLead>[]>([]);
   const [isCleaningData, setIsCleaningData] = useState(false);
 
