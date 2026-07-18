@@ -46,7 +46,7 @@ function App() {
   const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
   const [csvRows, setCsvRows] = useState<Record<string, string>[]>([]);
   
-  // Mapping State
+  
   const [columnMappings, setColumnMappings] = useState<Record<string, ColumnMapping>>({});
   const [isMappingLoading, setIsMappingLoading] = useState(false);
   
