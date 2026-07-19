@@ -38,8 +38,7 @@ function App() {
   const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem('auracrm_gemini_key') || '');
   const [showSettings, setShowSettings] = useState(false);
   const [testKeyStatus, setTestKeyStatus] = useState<'none' | 'success' | 'failed'>('none');
-  
-  // Importer Steps State
+ 
   const [importStep, setImportStep] = useState<ImportStep>('upload');
   const [isUnstructuredMode, setIsUnstructuredMode] = useState(false);
   const [fileName, setFileName] = useState<string>('');
