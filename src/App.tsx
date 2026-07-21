@@ -75,7 +75,7 @@ function App() {
     }
   };
 
-  // Test Gemini Connection
+ 
   const handleTestApiKey = async () => {
     if (!apiKey.trim()) return;
     setTestKeyStatus('none');
