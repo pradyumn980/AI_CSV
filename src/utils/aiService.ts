@@ -32,6 +32,12 @@ export interface ColumnMapping {
 
 export type MappingResult = Record<string, ColumnMapping>;
 
+export interface MappingResponse {
+  mappings: MappingResult;
+  isNonCRM: boolean;
+  reason?: string;
+}
+
 // Standard lead fields in CRM
 export const TARGET_FIELDS = [
   { key: 'name', label: 'Lead Name', required: true, description: 'Full name of the lead' },
@@ -151,7 +157,7 @@ export const cleanLeadDataLocally = (lead: Partial<CRMLead>): Partial<CRMLead> =
 /**
  * Local Smart Heuristic Mapping Engine (regex & synonymous checks)
  */
-export const performLocalMapping = (headers: string[], sampleRows: Record<string, string>[]): MappingResult => {
+export const performLocalMapping = (headers: string[], sampleRows: Record<string, string>[]): MappingResponse => {
   const result: MappingResult = {};
   
   // Set up default mapping structures
@@ -252,7 +258,31 @@ export const performLocalMapping = (headers: string[], sampleRows: Record<string
     }
   });
 
-  return result;
+  // Local detection of Non-CRM CSV
+  const nameMapped = result['name'] && result['name'].csvHeader !== null;
+  const emailMapped = result['email'] && result['email'].csvHeader !== null;
+  
+  let isNonCRM = false;
+  let reason = '';
+  
+  if (!nameMapped && !emailMapped) {
+    const lowercaseHeaders = headers.map(h => h.toLowerCase().trim());
+    const newsKeywords = ['title', 'content', 'body', 'article', 'author', 'published', 'headline', 'summary', 'news', 'journal', 'publisher'];
+    const hasNewsKeywords = lowercaseHeaders.some(h => newsKeywords.some(kw => h.includes(kw)));
+    
+    isNonCRM = true;
+    if (hasNewsKeywords) {
+      reason = 'This file appears to contain news/article data instead of contact or lead information.';
+    } else {
+      reason = 'No CRM contact fields could be identified in this CSV.';
+    }
+  }
+
+  return {
+    mappings: result,
+    isNonCRM,
+    reason
+  };
 };
 
 /**
@@ -342,7 +372,7 @@ export const performAIMapping = async (
   apiKey: string,
   headers: string[],
   sampleRows: Record<string, string>[]
-): Promise<MappingResult> => {
+): Promise<MappingResponse> => {
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ 
@@ -367,9 +397,12 @@ export const performAIMapping = async (
       2. Set "csvHeader" to the exact matching header name. If no header maps to the field, set "csvHeader" to null.
       3. Set "confidence" to 'high', 'medium', or 'low'.
       4. Provide a clear, short "reason" for your choice (e.g. "Matches standard contact email formatting", "Header represents deal sizes").
+      5. CRITICAL: Analyze if this CSV file is completely unrelated to CRM, contact information, or sales lead data (e.g., it contains news articles, blog posts, system logs, weather records, financial stock tickers, etc.). Set "isNonCRM" to true if the file does not contain contact details (Name, Email, etc.) and instead contains news/article or other unrelated data.
       
       Return a JSON object in this exact schema:
       {
+        "isNonCRM": boolean,
+        "reason": string,
         "mappings": {
           "name": { "csvHeader": string | null, "confidence": "high" | "medium" | "low" | "none", "reason": string },
           "email": { "csvHeader": string | null, "confidence": "high" | "medium" | "low" | "none", "reason": string },
@@ -384,7 +417,11 @@ export const performAIMapping = async (
     const data = JSON.parse(jsonText);
     
     if (data && data.mappings) {
-      return data.mappings;
+      return {
+        mappings: data.mappings,
+        isNonCRM: !!data.isNonCRM,
+        reason: data.reason
+      };
     }
     throw new Error('Invalid JSON format returned from Gemini');
   } catch (error) {

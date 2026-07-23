@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { parseCSV, parseCSVText } from './utils/csvParser';
-import type { CRMLead, ColumnMapping } from './utils/aiService';
+import type { CRMLead, ColumnMapping, MappingResponse } from './utils/aiService';
 import { 
   performAIMapping, 
   performLocalMapping, 
@@ -48,6 +48,7 @@ function App() {
   
   const [columnMappings, setColumnMappings] = useState<Record<string, ColumnMapping>>({});
   const [isMappingLoading, setIsMappingLoading] = useState(false);
+  const [nonCRMError, setNonCRMError] = useState<{ title: string; message: string; instruction: string } | null>(null);
   
   
   const [leadsToReview, setLeadsToReview] = useState<Partial<CRMLead>[]>([]);
@@ -103,6 +104,8 @@ function App() {
       const parsed = await parseCSV(file);
       setCsvHeaders(parsed.headers);
       setCsvRows(parsed.rows);
+      // Clear any previous non-CRM error when a new file is uploaded
+      setNonCRMError(null);
     } catch (err) {
       alert('Error parsing CSV file. Make sure it is a valid CSV format.');
       console.error(err);
@@ -209,22 +212,45 @@ ellen ripley,ripley@weyland.com,888-999-2222,Weyland-Yutani,Warrant Officer,$800
       return;
     }
 
-    // Structured Mode mapping:
+// Structured Mode mapping:
     setIsMappingLoading(true);
     setImportStep('mapping');
     
     try {
-      let mappings: Record<string, ColumnMapping> = {};
-      if (apiKey.trim()) {
-        mappings = await performAIMapping(apiKey, csvHeaders, csvRows);
-      } else {
-        mappings = performLocalMapping(csvHeaders, csvRows);
+      // Perform mapping using AI or local heuristic
+      const response: MappingResponse = apiKey.trim()
+        ? await performAIMapping(apiKey, csvHeaders, csvRows)
+        : performLocalMapping(csvHeaders, csvRows);
+      
+      // Check for non-CRM detection
+      if (response.isNonCRM) {
+        setNonCRMError({
+          title: 'No CRM fields could be identified',
+          message: response.reason || 'This file appears to contain news/article data instead of contact or lead information.',
+          instruction: 'Please upload a CSV containing fields such as Name, Email, Phone, Company, etc.'
+        });
+        // Return to upload step
+        setImportStep('upload');
+        setIsMappingLoading(false);
+        return;
       }
-      setColumnMappings(mappings);
+      
+      // Set mappings for CRM fields
+      setColumnMappings(response.mappings);
     } catch (err) {
       console.error(err);
-      // Fallback
-      setColumnMappings(performLocalMapping(csvHeaders, csvRows));
+      // Fallback to local mapping without detection
+      const fallbackResponse = performLocalMapping(csvHeaders, csvRows);
+      if (fallbackResponse.isNonCRM) {
+        setNonCRMError({
+          title: 'No CRM fields could be identified',
+          message: fallbackResponse.reason || 'This file appears to contain news/article data instead of contact or lead information.',
+          instruction: 'Please upload a CSV containing fields such as Name, Email, Phone, Company, etc.'
+        });
+        setImportStep('upload');
+      } else {
+        setColumnMappings(fallbackResponse.mappings);
+      }
     } finally {
       setIsMappingLoading(false);
     }
